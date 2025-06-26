@@ -220,6 +220,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 break;
             }
             await tts.run();
+            FlutterForegroundTask.minimizeApp();
             break;
           case 'color':
             List<int>? col = colores[decoded["queryResult"]["parameters"]["color"]];
@@ -230,6 +231,7 @@ class _MyHomePageState extends State<MyHomePage> {
               tts.newVoiceText = 'No se conocen parametros para el color ${decoded["queryResult"]["parameters"]["color"]}.';
             }
             await tts.run();
+            FlutterForegroundTask.minimizeApp();
             break;
           case 'temp':
             switch (decoded["queryResult"]["parameters"]["temp"]) { 
@@ -243,11 +245,13 @@ class _MyHomePageState extends State<MyHomePage> {
                 break;
             }
             await tts.run();
+            FlutterForegroundTask.minimizeApp();
             break;
           case 'brightness':
             brightness(decoded["queryResult"]["parameters"]["number"].toInt());
             tts.newVoiceText = 'Se ha puesto el brillo al ${decoded["queryResult"]["parameters"]["number"].toInt()} por ciento';
             await tts.run();
+            FlutterForegroundTask.minimizeApp();
             break;
           default:
             tts.newVoiceText = 'No se reconoció ningun comando.';
