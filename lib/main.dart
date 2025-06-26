@@ -4,12 +4,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:ihc_p3/taskhandler.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
-import 'tts.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
+import 'tts.dart';
 import 'package:shake/shake.dart';
-import 'package:external_app_launcher/external_app_launcher.dart';
 import 'package:flutter_background/flutter_background.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 final jsonheaders = {HttpHeaders.contentTypeHeader: 'application/json'};
@@ -27,11 +28,18 @@ const colores =
   "azul": [0, 0, 255],
   "verde": [0, 255, 0],
   "blanco": [255, 255, 255],
+  "magenta": [255, 0, 255],
+  "celeste": [0, 255, 255],
+  "amarillo": [255, 255, 0],
+  "rosa": [255, 127, 127],
+  "naranja": [255, 127, 0],
+  "morado": [127, 0, 255],
 };
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await FlutterBackground.initialize(androidConfig: androidConfig);
+  FlutterForegroundTask.initCommunicationPort();
   runApp(const MyApp());
 }
 
@@ -68,7 +76,68 @@ class _MyHomePageState extends State<MyHomePage> {
     tts.init();
     _initSpeech();
     enableBackgroundExecution();
-  } 
+    FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _requestPermissions();
+      _initService();
+    });
+  }
+  
+  @pragma('vm:entry-point')
+  void startCallback() {
+    FlutterForegroundTask.setTaskHandler(MyTaskHandler());
+  }
+
+  void _onReceiveTaskData(Object data) {
+    if (data is Map<String, dynamic>) {
+      final dynamic timestampMillis = data["timestampMillis"];
+      if (timestampMillis != null) {
+        final DateTime timestamp =
+            DateTime.fromMillisecondsSinceEpoch(timestampMillis, isUtc: true);
+        print('timestamp: ${timestamp.toString()}');
+      }
+    }
+  }
+
+  Future<void> _requestPermissions() async {
+    final NotificationPermission notificationPermission =
+        await FlutterForegroundTask.checkNotificationPermission();
+    if (notificationPermission != NotificationPermission.granted) {
+      await FlutterForegroundTask.requestNotificationPermission();
+    }
+    if (Platform.isAndroid) {
+      if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+      }
+      if (!await FlutterForegroundTask.canScheduleExactAlarms) {
+        await FlutterForegroundTask.openAlarmsAndRemindersSettings();
+      }
+      await FlutterForegroundTask.openSystemAlertWindowSettings();
+    }
+  }
+
+  void _initService() {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'foreground_service',
+        channelName: 'Esperando sensor...',
+        channelDescription:
+            'Agita tu dispositivo con fuerza 3 veces para iniciar.',
+        onlyAlertOnce: true,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: false,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.repeat(5000),
+        autoRunOnBoot: true,
+        autoRunOnMyPackageReplaced: true,
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
+    );
+  }
 
   void enableBackgroundExecution() async {
     await FlutterBackground.initialize();
@@ -98,13 +167,11 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void onPhoneShake(ShakeEvent event) async {
     print('shaken!');
+    FlutterForegroundTask.launchApp();
     doAfterShake();
   }
 
   void doAfterShake() async {
-    await LaunchApp.isAppInstalled(
-      androidPackageName: 'com.example.ihc_p3'
-    );
     status = 'confirmation';
     tts.newVoiceText = 'Quieres realizar algun comando de voz? Di confirmar.';
     await tts.run();
@@ -117,7 +184,7 @@ class _MyHomePageState extends State<MyHomePage> {
         print('resultado');
         print(result.recognizedWords);
         if (result.recognizedWords.toLowerCase() == 'confirmar') { listenToOrder(); }
-        else { tts.newVoiceText = 'Palabra incorrecta.'; await tts.run(); }
+        else { tts.newVoiceText = 'Palabra incorrecta.'; await tts.run(); FlutterForegroundTask.minimizeApp(); }
       }
     );
   }
@@ -135,6 +202,7 @@ class _MyHomePageState extends State<MyHomePage> {
         if (result.recognizedWords.toLowerCase() == 'cancelar') {
           tts.newVoiceText = 'Comando cancelado.';
           await tts.run();
+          FlutterForegroundTask.minimizeApp();
           return;
         }
         http.Response response = await http.post(Uri.parse("http://192.168.137.1:5000/api/dialogflow"), body: '{"text": "${result.recognizedWords}"}', headers: jsonheaders);
@@ -214,6 +282,7 @@ class _MyHomePageState extends State<MyHomePage> {
         attempts = 0;
         tts.newVoiceText = 'Comando cancelado.';
         await tts.run();
+        FlutterForegroundTask.minimizeApp();
         return;
       }
       tts.newVoiceText = 'No se entendió tu voz.';
@@ -248,18 +317,19 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   void dispose() {
-    super.dispose();
+    FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
     _detector?.stopListening();
     tts.stop();
+    super.dispose();
   }
 
 
   @override
   Widget build(BuildContext context) {
-final theme = Theme.of(context);
-final style = theme.textTheme.displaySmall!.copyWith(
-  color: theme.colorScheme.onPrimary
-);
+    final theme = Theme.of(context);
+    final style = theme.textTheme.displaySmall!.copyWith(
+      color: theme.colorScheme.onPrimary
+    );
 
     return Scaffold(
       body: Padding(
